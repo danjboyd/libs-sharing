@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Writes the library's symbolic icons to Resources/: share, email, copy,
-save, folder (24x24) and file, text (48x48), named <name>-symbolic.png so
+save, folder, open (24x24) and file, text (48x48), named <name>-symbolic.png so
 themes that tint template images draw them in the colour of the text around
 them. Only the shape (alpha) matters. Needs python3-cairo."""
 
@@ -63,6 +63,13 @@ def folder(cr):
     stroke(cr, [(3, 19), (3, 5), (9, 5), (11, 7), (21, 7), (21, 19)], close=True)
 
 
+def open_with(cr):
+    # An app's window with an arrow leaving it: open in another app.
+    stroke(cr, [(11, 5), (4, 5), (4, 20), (19, 20), (19, 13)])
+    stroke(cr, [(10, 14), (20, 4)])
+    triangle(cr, [(13, 3), (21, 3), (21, 11)])
+
+
 def file48(cr):
     stroke(cr, [(11, 5), (29, 5), (39, 15), (39, 43), (11, 43)], close=True)
     stroke(cr, [(29, 5), (29, 15), (39, 15)])
@@ -81,6 +88,7 @@ ICONS = {
     "GSSharing-copy-symbolic": (copy, 24),
     "GSSharing-save-symbolic": (save, 24),
     "GSSharing-folder-symbolic": (folder, 24),
+    "GSSharing-open-symbolic": (open_with, 24),
     "GSSharing-file-symbolic": (file48, 48),
     "GSSharing-text-symbolic": (text48, 48),
 }

@@ -66,12 +66,29 @@
                preferredEdge: NSMinYEdge];
 }
 
+/* Opening a file (from the command line, say) makes it the file shared. */
+- (BOOL) application: (NSApplication *)app openFile: (NSString *)file
+{
+  if ([[NSFileManager defaultManager] fileExistsAtPath: file] == NO)
+    {
+      return NO;
+    }
+  ASSIGN(path, file);
+  [picker setItems: [self itemsForFormat: [format selectedSegment]]];
+  return YES;
+}
+
 - (void) applicationDidFinishLaunching: (NSNotification *)n
 {
-  path = [[NSTemporaryDirectory() stringByAppendingPathComponent:
-            @"Share Demo.txt"] retain];
-  [@"A file to share.\n" writeToFile: path atomically: YES
-                            encoding: NSUTF8StringEncoding error: NULL];
+  /* The file it was asked to open (ShareDemo some.png), else a text file
+     of its own. */
+  if (path == nil)
+    {
+      path = [[NSTemporaryDirectory() stringByAppendingPathComponent:
+                @"Share Demo.txt"] retain];
+      [@"A file to share.\n" writeToFile: path atomically: YES
+                                encoding: NSUTF8StringEncoding error: NULL];
+    }
   window = [[NSWindow alloc] initWithContentRect: NSMakeRect(200, 200, 420, 160)
                                        styleMask: NSTitledWindowMask | NSClosableWindowMask
                                          backing: NSBackingStoreBuffered

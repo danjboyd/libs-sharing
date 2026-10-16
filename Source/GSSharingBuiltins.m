@@ -18,6 +18,7 @@
 #if defined(_WIN32)
 #  include <windows.h>
 #  include <shellapi.h>
+#  include <shlobj.h>
 #elif defined(GSSHARING_HAVE_GIO)
 #  include <fcntl.h>
 #  include <unistd.h>
@@ -41,6 +42,7 @@
 + (void) copy: (NSArray *)items service: (NSSharingService *)service;
 + (void) saveCopy: (NSArray *)items service: (NSSharingService *)service;
 + (void) showInFolder: (NSArray *)items service: (NSSharingService *)service;
++ (void) openWith: (NSArray *)items service: (NSSharingService *)service;
 @end
 
 
@@ -126,6 +128,73 @@ GSSharingMailtoURL(NSString *subject, NSArray *recipients)
               (to != nil ? to : @""), (encoded != nil ? encoded : @"")]];
 }
 
+BOOL
+GSSharingIsImageFile(id item)
+{
+  NSString *extension;
+
+  if (GSSharingKindOfItem(item) != GSSharingItemFile)
+    {
+      return NO;
+    }
+  /* Pictures, not documents: NSImage reads PDF and EPS too, which should
+     go as the files they are. */
+  extension = [[[item path] pathExtension] lowercaseString];
+  return [[NSArray arrayWithObjects: @"png", @"jpg", @"jpeg", @"gif", @"bmp",
+                   @"tif", @"tiff", @"webp", nil] containsObject: extension];
+}
+
+/* An image as PNG, from its bitmap when it has one. */
+static NSData *
+GSSharingPNGOfImage(NSImage *image)
+{
+  NSEnumerator *e = [[image representations] objectEnumerator];
+  NSImageRep *rep;
+  NSBitmapImageRep *bitmap = nil;
+
+  while ((rep = [e nextObject]) != nil)
+    {
+      if ([rep isKindOfClass: [NSBitmapImageRep class]])
+        {
+          bitmap = (NSBitmapImageRep *)rep;
+          break;
+        }
+    }
+  if (bitmap == nil)
+    {
+      NSData *tiff = [image TIFFRepresentation];
+
+      bitmap = (tiff != nil) ? [NSBitmapImageRep imageRepWithData: tiff] : nil;
+    }
+  return [bitmap representationUsingType: NSPNGFileType
+                              properties: [NSDictionary dictionary]];
+}
+
+/* The image types put on the pasteboard for an image (PNG first: chat
+   apps and browsers paste that), with their data, in two arrays. A PNG
+   file is put as it is; any other image is converted. */
+static void
+GSSharingImageTypes(NSImage *image, NSData *png, NSMutableArray *types,
+                    NSMutableArray *data)
+{
+  NSData *tiff = [image TIFFRepresentation];
+
+  if (png == nil)
+    {
+      png = GSSharingPNGOfImage(image);
+    }
+  if (png != nil)
+    {
+      [types addObject: NSPasteboardTypePNG];
+      [data addObject: png];
+    }
+  if (tiff != nil)
+    {
+      [types addObject: NSTIFFPboardType];
+      [data addObject: tiff];
+    }
+}
+
 /* Puts text (rich or plain) on the pasteboard: RTF and plain text, and
    HTML when an attributed string carries it as GSSharingHTMLAttribute's
    document (apps that render HTML themselves set it). */
@@ -160,22 +229,48 @@ GSSharingWriteText(NSPasteboard *pasteboard, id text)
   [pasteboard setString: plain forType: NSStringPboardType];
 }
 
+/* Files on the pasteboard. One image file goes as its image too, first,
+   so pasting it into a chat or a document gives the picture, and into a
+   file manager the file. */
 static void
 GSSharingWriteFiles(NSPasteboard *pasteboard, NSArray *files)
 {
   NSMutableArray *paths = [NSMutableArray array];
   NSMutableString *uriList = [NSMutableString string];
+  NSMutableArray *types = [NSMutableArray array];
+  NSMutableArray *imageData = [NSMutableArray array];
   NSEnumerator *e = [files objectEnumerator];
   NSURL *file;
+  NSUInteger i;
 
   while ((file = [e nextObject]) != nil)
     {
       [paths addObject: [file path]];
       [uriList appendFormat: @"%@\r\n", [file absoluteString]];
     }
-  [pasteboard declareTypes: [NSArray arrayWithObjects: NSFilenamesPboardType,
-                                     NSURLPboardType, NSStringPboardType, nil]
-                     owner: nil];
+  if ([files count] == 1 && GSSharingIsImageFile([files objectAtIndex: 0]))
+    {
+      NSString *path = [[files objectAtIndex: 0] path];
+      NSImage *image = AUTORELEASE([[NSImage alloc] initWithContentsOfFile: path]);
+      NSData *png = nil;
+
+      if ([[[path pathExtension] lowercaseString] isEqualToString: @"png"])
+        {
+          png = [NSData dataWithContentsOfFile: path];
+        }
+      if (image != nil)
+        {
+          GSSharingImageTypes(image, png, types, imageData);
+        }
+    }
+  [types addObjectsFromArray: [NSArray arrayWithObjects: NSFilenamesPboardType,
+                                       NSURLPboardType, NSStringPboardType, nil]];
+  [pasteboard declareTypes: types owner: nil];
+  for (i = 0; i < [imageData count]; i++)
+    {
+      [pasteboard setData: [imageData objectAtIndex: i]
+                  forType: [types objectAtIndex: i]];
+    }
   [pasteboard setPropertyList: paths forType: NSFilenamesPboardType];
   /* As text/uri-list bytes: GNUstep keeps a string set for a type other
      than NSStringPboardType serialized, and its X11 server would hand that
@@ -282,6 +377,215 @@ GSSharingComposeEmailParameters(gint32 handle, void *context)
                         g_variant_builder_end(&handles));
   return g_variant_new("(sa{sv})", "", &options);
 }
+
+/* OpenFile with "ask": the desktop's own chooser of the apps that open
+   the file (GNOME's "Open With" dialog), the default one selected. */
+static GVariant *
+GSSharingOpenFileParameters(gint32 handle, void *context)
+{
+  GVariantBuilder options;
+
+  g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&options, "{sv}", "ask", g_variant_new_boolean(TRUE));
+  return g_variant_new("(sha{sv})", "", handle, &options);
+}
+
+/* The portal's Response to an OpenFile request: -1 until it comes. */
+static void
+GSSharingPortalResponse(GDBusConnection *bus, const gchar *sender,
+                        const gchar *path, const gchar *interface,
+                        const gchar *signal, GVariant *parameters,
+                        gpointer context)
+{
+  guint32 response = 2;
+
+  g_variant_get(parameters, "(u@a{sv})", &response, NULL);
+  *(gint *)context = (gint)response;
+}
+
+/* Opens the desktop's own chooser of the apps for the file, through the
+   portal. NO when the portal isn't there, or answers at once that it
+   can't (it accepts the request first, and then a session without its
+   desktop backend answers "failed" and shows nothing): the caller falls
+   back. Otherwise the chooser is up, and its answer comes when the user
+   picks an app, so it isn't waited for. */
+static BOOL
+GSSharingOpenFileWithPortal(NSString *path)
+{
+  GError *error = NULL;
+  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
+  gint response = -1;
+  guint subscription;
+  GUnixFDList *fds;
+  GVariant *reply = NULL;
+  gint32 handle = -1;
+  int fd;
+  BOOL opened = NO;
+
+  if (bus == NULL)
+    {
+      g_clear_error(&error);
+      return NO;
+    }
+  /* Subscribed first, so an answer sent at once isn't missed. */
+  subscription = g_dbus_connection_signal_subscribe(bus,
+    "org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request",
+    "Response", NULL, NULL, G_DBUS_SIGNAL_FLAGS_NONE,
+    GSSharingPortalResponse, &response, NULL);
+  fds = g_unix_fd_list_new();
+  fd = open([path fileSystemRepresentation], O_RDONLY | O_CLOEXEC);
+  if (fd >= 0)
+    {
+      handle = g_unix_fd_list_append(fds, fd, &error);
+      close(fd);
+    }
+  if (handle >= 0)
+    {
+      reply = g_dbus_connection_call_with_unix_fd_list_sync(bus,
+        "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
+        "org.freedesktop.portal.OpenURI", "OpenFile",
+        GSSharingOpenFileParameters(handle, NULL), G_VARIANT_TYPE("(o)"),
+        G_DBUS_CALL_FLAGS_NONE, -1, fds, NULL, NULL, &error);
+    }
+  if (reply != NULL)
+    {
+      /* The signal comes through GLib's main context, which GNUstep's run
+         loop doesn't turn: turn it here for half a second. */
+      gint64 until = g_get_monotonic_time() + 500000;
+
+      while (response < 0 && g_get_monotonic_time() < until)
+        {
+          if (g_main_context_iteration(NULL, FALSE) == FALSE)
+            {
+              g_usleep(10000);
+            }
+        }
+      /* 0 opened, 1 cancelled: either way the user saw the chooser. */
+      opened = (response < 0 || response == 0 || response == 1);
+      g_variant_unref(reply);
+    }
+  g_dbus_connection_signal_unsubscribe(bus, subscription);
+  g_clear_error(&error);
+  g_object_unref(fds);
+  g_object_unref(bus);
+  return opened;
+}
+
+/* Without the portal: a menu of the apps that say they open the file's
+   type, the default first; choosing one opens the file in it. */
+@interface GSSharingOpenWithMenu : NSObject
+{
+  NSString *path;
+}
++ (BOOL) showMenuForPath: (NSString *)aPath;
+- (void) openInApp: (NSMenuItem *)sender;
+@end
+
+@implementation GSSharingOpenWithMenu
+
++ (BOOL) showMenuForPath: (NSString *)aPath
+{
+  char *type = g_content_type_guess([aPath fileSystemRepresentation], NULL, 0, NULL);
+  GList *apps = (type != NULL) ? g_app_info_get_all_for_type(type) : NULL;
+  GAppInfo *preferred = (type != NULL)
+    ? g_app_info_get_default_for_type(type, FALSE) : NULL;
+  const char *preferredID = (preferred != NULL) ? g_app_info_get_id(preferred) : NULL;
+  GSSharingOpenWithMenu *target;
+  NSMenu *menu;
+  /* At the pointer, in the app's window: the sheet that was clicked has
+     closed by now. */
+  NSWindow *window = [NSApp mainWindow];
+  NSEvent *event = nil;
+  GList *l;
+  BOOL shown = NO;
+
+  g_free(type);
+  target = AUTORELEASE([GSSharingOpenWithMenu new]);
+  ASSIGNCOPY(target->path, aPath);
+  menu = AUTORELEASE([[NSMenu alloc] initWithTitle: @"Open With"]);
+  for (l = apps; l != NULL; l = l->next)
+    {
+      GAppInfo *app = l->data;
+      const char *identifier = g_app_info_get_id(app);
+      NSMenuItem *item;
+
+      if (identifier == NULL || g_app_info_should_show(app) == FALSE)
+        {
+          continue;
+        }
+      item = [[NSMenuItem alloc]
+               initWithTitle: [NSString stringWithUTF8String:
+                                g_app_info_get_display_name(app)]
+                      action: @selector(openInApp:)
+               keyEquivalent: @""];
+      [item setTarget: target];
+      [item setRepresentedObject: [NSString stringWithUTF8String: identifier]];
+      if (preferredID != NULL && strcmp(identifier, preferredID) == 0)
+        {
+          [menu insertItem: item atIndex: 0];
+        }
+      else
+        {
+          [menu addItem: item];
+        }
+      RELEASE(item);
+    }
+  g_list_free_full(apps, g_object_unref);
+  if (preferred != NULL)
+    {
+      g_object_unref(preferred);
+    }
+  if (window != nil)
+    {
+      event = [NSEvent mouseEventWithType: NSRightMouseDown
+                                 location: [window mouseLocationOutsideOfEventStream]
+                            modifierFlags: 0
+                                timestamp: 0
+                             windowNumber: [window windowNumber]
+                                  context: nil
+                              eventNumber: 0
+                               clickCount: 1
+                                 pressure: 1.0];
+    }
+  if ([menu numberOfItems] > 0 && event != nil)
+    {
+      /* The menu keeps its items, which keep the target while it shows. */
+      [NSMenu popUpContextMenu: menu withEvent: event forView: [window contentView]];
+      shown = YES;
+    }
+  return shown;
+}
+
+- (void) dealloc
+{
+  RELEASE(path);
+  [super dealloc];
+}
+
+- (void) openInApp: (NSMenuItem *)sender
+{
+  GDesktopAppInfo *app = g_desktop_app_info_new(
+    [[sender representedObject] UTF8String]);
+  GFile *file = g_file_new_for_path([path fileSystemRepresentation]);
+  GList *files = g_list_append(NULL, file);
+  GError *error = NULL;
+
+  if (app == NULL || g_app_info_launch(G_APP_INFO(app), files, NULL, &error) == FALSE)
+    {
+      [GSSharingNotice showMessage: @"That app didn't open the file."
+                            detail: @"Drag it into an app's window instead."
+                              file: [NSURL fileURLWithPath: path]];
+    }
+  g_clear_error(&error);
+  g_list_free(files);
+  g_object_unref(file);
+  if (app != NULL)
+    {
+      g_object_unref(app);
+    }
+}
+
+@end
 
 static BOOL
 GSSharingShowItemsInFileManager(NSArray *files)
@@ -609,9 +913,17 @@ GSSharingOpenURL(NSURL *url)
     }
   else if (kind == GSSharingItemImage)
     {
-      [pasteboard declareTypes: [NSArray arrayWithObject: NSTIFFPboardType]
-                         owner: nil];
-      [pasteboard setData: [first TIFFRepresentation] forType: NSTIFFPboardType];
+      NSMutableArray *types = [NSMutableArray array];
+      NSMutableArray *data = [NSMutableArray array];
+      NSUInteger i;
+
+      GSSharingImageTypes(first, nil, types, data);
+      [pasteboard declareTypes: types owner: nil];
+      for (i = 0; i < [types count]; i++)
+        {
+          [pasteboard setData: [data objectAtIndex: i]
+                      forType: [types objectAtIndex: i]];
+        }
     }
   else if (kind == GSSharingItemURL)
     {
@@ -706,6 +1018,49 @@ GSSharingOpenURL(NSURL *url)
 #endif
 }
 
++ (void) openWith: (NSArray *)items service: (NSSharingService *)service
+{
+  NSString *path = [[GSSharingFilesOfItems(items) lastObject] path];
+
+  if (path == nil)
+    {
+      return;
+    }
+#if defined(_WIN32)
+  {
+    NSUInteger length = [path length];
+    unichar *wide = malloc((length + 1) * sizeof(unichar));
+    OPENASINFO info;
+
+    if (wide == NULL)
+      {
+        return;
+      }
+    [path getCharacters: wide range: NSMakeRange(0, length)];
+    wide[length] = 0;
+    memset(&info, 0, sizeof(info));
+    info.pcszFile = (const wchar_t *)wide;
+    info.oaifInFlags = OAIF_ALLOW_REGISTRATION | OAIF_EXEC;
+    SHOpenWithDialog(NULL, &info);
+    free(wide);
+  }
+#elif defined(GSSHARING_HAVE_GIO)
+  /* The desktop's own chooser through the portal (sandboxed or not); its
+     dialog may take a moment, and reports nothing back. */
+  if (GSSharingOpenFileWithPortal(path))
+    {
+      return;
+    }
+  if ([GSSharingOpenWithMenu showMenuForPath: path])
+    {
+      return;
+    }
+  [GSSharingNotice showMessage: @"No app here says it opens this file."
+                        detail: @"Drag it into an app's window, or show it in its folder."
+                          file: [NSURL fileURLWithPath: path]];
+#endif
+}
+
 @end
 
 
@@ -747,6 +1102,11 @@ GSSharingBuiltinServicesForItems(NSArray *items)
     GSSharingMakeBuiltinService(GSSharingServiceNameShowInFolder, @"Show in Folder",
                                 @"GSSharing-folder", files,
                                 @selector(showInFolder:service:)),
+#if defined(_WIN32) || defined(GSSHARING_HAVE_GIO)
+    GSSharingMakeBuiltinService(GSSharingServiceNameOpenWith, @"Open With…",
+                                @"GSSharing-open", files,
+                                @selector(openWith:service:)),
+#endif
     nil];
 
   return all;
