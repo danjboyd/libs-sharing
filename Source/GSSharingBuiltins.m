@@ -303,9 +303,26 @@ GSSharingLaunchDefault(NSURL *url)
   return launched ? YES : NO;
 }
 
-/* Calls a desktop portal method that takes a file as a descriptor; NO if
-   the portal isn't there. parameters builds the call's arguments around
-   the descriptor's handle (no blocks: GCC). */
+/* The portal's Response to a request: -1 until it comes. */
+static void
+GSSharingPortalResponse(GDBusConnection *bus, const gchar *sender,
+                        const gchar *path, const gchar *interface,
+                        const gchar *signal, GVariant *parameters,
+                        gpointer context)
+{
+  guint32 response = 2;
+
+  g_variant_get(parameters, "(u@a{sv})", &response, NULL);
+  *(gint *)context = (gint)response;
+}
+
+/* Calls a desktop portal method that takes a file as a descriptor.
+   parameters builds the call's arguments around the descriptor's handle
+   (no blocks: GCC). NO when the portal isn't there, or answers at once
+   that it can't (it accepts the request first, and then a session
+   without its desktop backend answers "failed" and shows nothing): the
+   caller falls back. Otherwise the portal's window is up, and its answer
+   comes when the user is done with it, so it isn't waited for. */
 typedef GVariant *(*GSSharingPortalParameters)(gint32 handle, void *context);
 
 static BOOL
@@ -315,8 +332,11 @@ GSSharingCallPortalWithFile(const char *interface, const char *method,
 {
   GError *error = NULL;
   GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
+  gint response = -1;
+  guint subscription;
   GUnixFDList *fds;
-  gint32 handle;
+  GVariant *reply = NULL;
+  gint32 handle = -1;
   int fd;
   BOOL called = NO;
 
@@ -325,28 +345,43 @@ GSSharingCallPortalWithFile(const char *interface, const char *method,
       g_clear_error(&error);
       return NO;
     }
-  fd = open([path fileSystemRepresentation], O_RDONLY | O_CLOEXEC);
-  if (fd < 0)
-    {
-      g_object_unref(bus);
-      return NO;
-    }
+  /* Subscribed first, so an answer sent at once isn't missed. */
+  subscription = g_dbus_connection_signal_subscribe(bus,
+    "org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request",
+    "Response", NULL, NULL, G_DBUS_SIGNAL_FLAGS_NONE,
+    GSSharingPortalResponse, &response, NULL);
   fds = g_unix_fd_list_new();
-  handle = g_unix_fd_list_append(fds, fd, &error);
-  close(fd);
+  fd = open([path fileSystemRepresentation], O_RDONLY | O_CLOEXEC);
+  if (fd >= 0)
+    {
+      handle = g_unix_fd_list_append(fds, fd, &error);
+      close(fd);
+    }
   if (handle >= 0)
     {
-      GVariant *reply = g_dbus_connection_call_with_unix_fd_list_sync(bus,
+      reply = g_dbus_connection_call_with_unix_fd_list_sync(bus,
         "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
-        interface, method, parameters(handle, context),
-        NULL, G_DBUS_CALL_FLAGS_NONE, -1, fds, NULL, NULL, &error);
-
-      if (reply != NULL)
-        {
-          called = YES;
-          g_variant_unref(reply);
-        }
+        interface, method, parameters(handle, context), G_VARIANT_TYPE("(o)"),
+        G_DBUS_CALL_FLAGS_NONE, -1, fds, NULL, NULL, &error);
     }
+  if (reply != NULL)
+    {
+      /* The signal comes through GLib's main context, which GNUstep's run
+         loop doesn't turn: turn it here for half a second. */
+      gint64 until = g_get_monotonic_time() + 500000;
+
+      while (response < 0 && g_get_monotonic_time() < until)
+        {
+          if (g_main_context_iteration(NULL, FALSE) == FALSE)
+            {
+              g_usleep(10000);
+            }
+        }
+      /* 0 done, 1 cancelled: either way the user saw the portal's window. */
+      called = (response < 0 || response == 0 || response == 1);
+      g_variant_unref(reply);
+    }
+  g_dbus_connection_signal_unsubscribe(bus, subscription);
   g_clear_error(&error);
   g_object_unref(fds);
   g_object_unref(bus);
@@ -390,85 +425,14 @@ GSSharingOpenFileParameters(gint32 handle, void *context)
   return g_variant_new("(sha{sv})", "", handle, &options);
 }
 
-/* The portal's Response to an OpenFile request: -1 until it comes. */
-static void
-GSSharingPortalResponse(GDBusConnection *bus, const gchar *sender,
-                        const gchar *path, const gchar *interface,
-                        const gchar *signal, GVariant *parameters,
-                        gpointer context)
-{
-  guint32 response = 2;
-
-  g_variant_get(parameters, "(u@a{sv})", &response, NULL);
-  *(gint *)context = (gint)response;
-}
-
 /* Opens the desktop's own chooser of the apps for the file, through the
-   portal. NO when the portal isn't there, or answers at once that it
-   can't (it accepts the request first, and then a session without its
-   desktop backend answers "failed" and shows nothing): the caller falls
-   back. Otherwise the chooser is up, and its answer comes when the user
-   picks an app, so it isn't waited for. */
+   portal; NO when it can't, so the caller falls back. */
 static BOOL
 GSSharingOpenFileWithPortal(NSString *path)
 {
-  GError *error = NULL;
-  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
-  gint response = -1;
-  guint subscription;
-  GUnixFDList *fds;
-  GVariant *reply = NULL;
-  gint32 handle = -1;
-  int fd;
-  BOOL opened = NO;
-
-  if (bus == NULL)
-    {
-      g_clear_error(&error);
-      return NO;
-    }
-  /* Subscribed first, so an answer sent at once isn't missed. */
-  subscription = g_dbus_connection_signal_subscribe(bus,
-    "org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request",
-    "Response", NULL, NULL, G_DBUS_SIGNAL_FLAGS_NONE,
-    GSSharingPortalResponse, &response, NULL);
-  fds = g_unix_fd_list_new();
-  fd = open([path fileSystemRepresentation], O_RDONLY | O_CLOEXEC);
-  if (fd >= 0)
-    {
-      handle = g_unix_fd_list_append(fds, fd, &error);
-      close(fd);
-    }
-  if (handle >= 0)
-    {
-      reply = g_dbus_connection_call_with_unix_fd_list_sync(bus,
-        "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop",
-        "org.freedesktop.portal.OpenURI", "OpenFile",
-        GSSharingOpenFileParameters(handle, NULL), G_VARIANT_TYPE("(o)"),
-        G_DBUS_CALL_FLAGS_NONE, -1, fds, NULL, NULL, &error);
-    }
-  if (reply != NULL)
-    {
-      /* The signal comes through GLib's main context, which GNUstep's run
-         loop doesn't turn: turn it here for half a second. */
-      gint64 until = g_get_monotonic_time() + 500000;
-
-      while (response < 0 && g_get_monotonic_time() < until)
-        {
-          if (g_main_context_iteration(NULL, FALSE) == FALSE)
-            {
-              g_usleep(10000);
-            }
-        }
-      /* 0 opened, 1 cancelled: either way the user saw the chooser. */
-      opened = (response < 0 || response == 0 || response == 1);
-      g_variant_unref(reply);
-    }
-  g_dbus_connection_signal_unsubscribe(bus, subscription);
-  g_clear_error(&error);
-  g_object_unref(fds);
-  g_object_unref(bus);
-  return opened;
+  return GSSharingCallPortalWithFile("org.freedesktop.portal.OpenURI",
+                                     "OpenFile", path,
+                                     GSSharingOpenFileParameters, NULL);
 }
 
 /* Without the portal: a menu of the apps that say they open the file's
