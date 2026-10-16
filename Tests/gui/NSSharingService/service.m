@@ -178,6 +178,56 @@ main (int argc, const char **argv)
     }
   END_SET ("the picker")
 
+  START_SET ("a picker lives while its sheet shows")
+    {
+      NSWindow *window = nil;
+      NSWindow *sheet = nil;
+      NSEnumerator *e;
+      NSWindow *w;
+
+      NS_DURING
+        {
+          [NSApplication sharedApplication];
+          window = [[NSWindow alloc] initWithContentRect: NSMakeRect (100, 100, 300, 200)
+                                               styleMask: NSTitledWindowMask
+                                                 backing: NSBackingStoreBuffered
+                                                   defer: NO];
+        }
+      NS_HANDLER
+        {
+          window = nil;
+        }
+      NS_ENDHANDLER
+      if (window == nil)
+        {
+          SKIP ("no display")
+        }
+      {
+        NSAutoreleasePool *inner = [NSAutoreleasePool new];
+        NSSharingServicePicker *p = [[[NSSharingServicePicker alloc]
+                                       initWithItems: files] autorelease];
+
+        /* Shown and let go of, as an app does with a local. */
+        [p showRelativeToRect: NSMakeRect (10, 10, 1, 1)
+                       ofView: [window contentView]
+                preferredEdge: NSMinYEdge];
+        [inner release];
+      }
+      e = [[NSApp windows] objectEnumerator];
+      while ((w = [e nextObject]) != nil)
+        {
+          if ([[w title] isEqual: @"Share"] && [w isVisible])
+            {
+              sheet = w;
+            }
+        }
+      PASS (sheet != nil, "its sheet is still up after the pool it was made in is gone");
+      [sheet performClose: nil];
+      PASS ([sheet isVisible] == NO, "and closes when asked");
+      [window release];
+    }
+  END_SET ("a picker lives while its sheet shows")
+
   [pool release];
   return 0;
 }
