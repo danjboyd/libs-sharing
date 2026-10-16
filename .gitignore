@@ -1,0 +1,7 @@
+obj/
+*.app/
+Tests/**/obj/
+Tests/tests.log
+Tests/tests.sum
+Tests/oldtests.*
+Examples/ShareDemo/Source/
