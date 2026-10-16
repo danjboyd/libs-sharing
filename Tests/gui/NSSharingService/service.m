@@ -170,6 +170,9 @@ main (int argc, const char **argv)
       PASS ([p accessoryView] == accessory, "it keeps the app's accessory view");
       [p setDelegate: r];
       PASS ([p delegate] == r, "and its delegate");
+      PASS ([p servicesEnabled], "its services can be chosen");
+      [p setServicesEnabled: NO];
+      PASS ([p servicesEnabled] == NO, "until the app disables them while it prepares items");
       [p close];
       PASS (YES, "closing a picker that isn't showing does nothing");
     }
