@@ -49,6 +49,35 @@
 
 static NSString *dir = nil;
 
+/* Counts the background refreshes heard of. */
+@interface RefreshCounter : NSObject
+{
+@public
+  int count;
+}
+- (void) refreshed: (NSNotification *)n;
+@end
+@implementation RefreshCounter
+- (void) refreshed: (NSNotification *)n
+{
+  count++;
+}
+@end
+
+/* Runs the run loop until counter has heard of n refreshes, or 10 s. */
+static void
+waitForRefreshes (RefreshCounter *counter, int n)
+{
+  NSDate *limit = [NSDate dateWithTimeIntervalSinceNow: 10];
+
+  while (counter->count < n && [limit timeIntervalSinceNow] > 0)
+    {
+      [[NSRunLoop currentRunLoop] runUntilDate: [NSDate dateWithTimeIntervalSinceNow: 0.05]];
+    }
+  /* A second notification would come right after. */
+  [[NSRunLoop currentRunLoop] runUntilDate: [NSDate dateWithTimeIntervalSinceNow: 0.3]];
+}
+
 static void
 setMode (NSString *mode)
 {
@@ -111,7 +140,10 @@ static NSString *fakeRclone =
   @"mode=$(cat \"$D/mode\" 2>/dev/null)\n"
   @"case \"$1\" in\n"
   @" listremotes)\n"
-  @"  if [ \"$mode\" = encrypted ] && [ -z \"$RCLONE_CONFIG_PASS\" ]; then\n"
+  @"  case \"$mode\" in slowlist|slowencrypted) sleep 1;; esac\n"
+  @"  if [ \"$mode\" = encrypted ] || [ \"$mode\" = slowencrypted ]; then\n"
+  @"   [ -z \"$RCLONE_CONFIG_PASS\" ] || [ \"$RCLONE_CONFIG_PASS\" = s3cret ] || { echo '2026/10/16 19:00:00 CRITICAL: Failed to load config file: could not decrypt configuration, most likely wrong password.' >&2; exit 1; }; fi\n"
+  @"  if { [ \"$mode\" = encrypted ] || [ \"$mode\" = slowencrypted ]; } && [ -z \"$RCLONE_CONFIG_PASS\" ]; then\n"
   @"   echo '2026/10/16 19:00:00 CRITICAL: Failed to load config file: unable to decrypt configuration and not allowed to ask for password: set RCLONE_CONFIG_PASS to your configuration password' >&2; exit 1; fi\n"
   @"  printf 'Work Drive: onedrive\\nphotos:     alias\\nPersonal:   drive\\nlocal:      local\\n'; exit 0;;\n"
   @" lsf)\n"
@@ -148,6 +180,7 @@ main (int argc, char **argv)
   NSEnumerator *e;
   GSSharingRcloneRemote *r;
   NSDate *limit;
+  RefreshCounter *counter;
 
   START_SET("rclone")
 
@@ -231,6 +264,47 @@ main (int argc, char **argv)
     }
   PASS([[GSSharingRclone cachedRemotes] count] == 2,
     "a refresh in the background fills the remotes kept");
+
+  /* The remotes kept stay while a refresh runs. */
+  counter = [[RefreshCounter new] autorelease];
+  [[NSNotificationCenter defaultCenter] addObserver: counter
+                                           selector: @selector(refreshed:)
+                                               name: GSSharingRcloneRemotesDidChangeNotification
+                                             object: nil];
+  [[NSRunLoop currentRunLoop] runUntilDate: [NSDate dateWithTimeIntervalSinceNow: 0.3]];
+  counter->count = 0;
+  setMode (@"slowlist");
+  [GSSharingRclone refreshRemotesInBackgroundWithPassword: nil];
+  [[NSRunLoop currentRunLoop] runUntilDate: [NSDate dateWithTimeIntervalSinceNow: 0.3]];
+  PASS([[GSSharingRclone cachedRemotes] count] == 2,
+    "the remotes kept are still there while a refresh runs");
+  waitForRefreshes (counter, 1);
+  PASS(counter->count == 1 && [[GSSharingRclone cachedRemotes] count] == 2,
+    "and are replaced when it ends");
+
+  /* A password given while a refresh without one runs is still tried. */
+  [GSSharingRclone forgetRemotes];
+  counter->count = 0;
+  setMode (@"slowencrypted");
+  [GSSharingRclone refreshRemotesInBackgroundWithPassword: nil];
+  [[NSRunLoop currentRunLoop] runUntilDate: [NSDate dateWithTimeIntervalSinceNow: 0.2]];
+  [GSSharingRclone refreshRemotesInBackgroundWithPassword: @"s3cret"];
+  [GSSharingRclone refreshRemotesInBackgroundWithPassword: nil];
+  waitForRefreshes (counter, 1);
+  PASS(logHas (@"pass=s3cret") && [[GSSharingRclone cachedRemotes] count] == 2
+    && [GSSharingRclone lastRemotesError] == nil,
+    "a password typed during a refresh is tried after it");
+  PASS(counter->count == 1, "and the refresh is told of once, after the last run");
+
+  /* A refresh that fails doesn't keep the old remotes. */
+  counter->count = 0;
+  setMode (@"encrypted");
+  [GSSharingRclone refreshRemotesInBackgroundWithPassword: @"wrong"];
+  waitForRefreshes (counter, 1);
+  PASS([GSSharingRclone cachedRemotes] == nil
+    && [GSSharingRclone lastRemotesError] != nil,
+    "a refresh that fails clears the remotes kept and says why");
+  [[NSNotificationCenter defaultCenter] removeObserver: counter];
 
   /* An upload and its link. */
   setMode (@"plain");
