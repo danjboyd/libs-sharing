@@ -339,6 +339,10 @@ GSSharingDisplayNameOfItem(id item)
     {
       [delegate sharingService: self willShareItems: items];
     }
+  /* finishesLater stays set while an earlier job hasn't reported: it
+     reports once, for the job that's still going. */
+  state->performing = YES;
+  state->reported = NO;
 #ifdef GSSHARING_HAS_BLOCKS
   if (state->handler != nil)
     {
@@ -352,6 +356,13 @@ GSSharingDisplayNameOfItem(id item)
                           withObject: items
                           withObject: self];
     }
+  state->performing = NO;
+  /* A service that reports itself has, or will. */
+  if (state->finishesLater || state->reported)
+    {
+      return;
+    }
+  delegate = state->delegate;
   if ([delegate respondsToSelector:
          @selector(sharingService:didShareItems:)])
     {
@@ -360,6 +371,59 @@ GSSharingDisplayNameOfItem(id item)
 }
 
 @end
+
+
+void
+GSSharingServiceWillFinishLater(NSSharingService *service)
+{
+  GSSharingServiceState *state = GSSharingStateForService(service, YES);
+
+  if (state->finishesLater == NO)
+    {
+      state->finishesLater = YES;
+      /* Kept until it reports: the sheet that offered it may be gone. */
+      RETAIN(service);
+    }
+}
+
+void
+GSSharingServiceFinish(NSSharingService *service, NSArray *items,
+                       NSError *error)
+{
+  GSSharingServiceState *state = GSSharingStateForService(service, NO);
+  id delegate;
+
+  if (state == nil || state->finishesLater == NO)
+    {
+      return;
+    }
+  state->finishesLater = NO;
+  state->reported = state->performing;
+  delegate = state->delegate;
+  if (error == nil)
+    {
+      if ([delegate respondsToSelector:
+             @selector(sharingService:didShareItems:)])
+        {
+          [delegate sharingService: service didShareItems: items];
+        }
+    }
+  else if ([delegate respondsToSelector:
+              @selector(sharingService:didFailToShareItems:error:)])
+    {
+      [delegate sharingService: service didFailToShareItems: items
+                         error: error];
+    }
+  AUTORELEASE(service);
+}
+
+NSError *
+GSSharingCancelledError(void)
+{
+  return [NSError errorWithDomain: NSCocoaErrorDomain
+                             code: NSUserCancelledError
+                         userInfo: nil];
+}
 
 
 /* NSSharingServicePicker's methods. */

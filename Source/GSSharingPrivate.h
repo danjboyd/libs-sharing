@@ -31,6 +31,13 @@
   /* Built-in services: which kinds of item they take, as GSSharingItemKind
      bits; 0 for the app's own services, which take anything. */
   unsigned accepts;
+  /* -performWithItems: is running the service's work. */
+  BOOL performing;
+  /* The service reports how it went itself (GSSharingServiceWillFinishLater),
+     and hasn't yet. */
+  BOOL finishesLater;
+  /* It has reported, during this -performWithItems:. */
+  BOOL reported;
 }
 @end
 
@@ -75,6 +82,21 @@ NSSharingService *GSSharingMakeBuiltinService(NSString *name,
                                               NSString *imageName,
                                               unsigned accepts,
                                               SEL action);
+
+/* A service whose work goes on after it returns (an upload), or that can
+   fail or be cancelled, says so while it performs, and reports how it went
+   with GSSharingServiceFinish: then, or later. The delegate then gets
+   -sharingService:didShareItems: (error nil) or
+   -sharingService:didFailToShareItems:error:, once. A service that doesn't
+   is done when it returns, and -performWithItems: reports it shared, as
+   before. The service is kept until it reports. */
+void GSSharingServiceWillFinishLater(NSSharingService *service);
+void GSSharingServiceFinish(NSSharingService *service, NSArray *items,
+                            NSError *error);
+
+/* The error a service reports when the user cancels it (AppKit's:
+   NSCocoaErrorDomain, NSUserCancelledError). */
+NSError *GSSharingCancelledError(void);
 
 /* The built-in services for items, in the sheet's order. */
 NSArray *GSSharingBuiltinServicesForItems(NSArray *items);

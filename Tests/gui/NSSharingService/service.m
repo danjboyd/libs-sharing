@@ -7,6 +7,7 @@
 #import <AppKit/AppKit.h>
 #import "Testing.h"
 #import "GSSharing.h"
+#import "GSSharingPrivate.h"
 
 @interface Recorder : NSObject
 {
@@ -41,6 +42,47 @@
 - (void) sharingService: (NSSharingService *)service didShareItems: (NSArray *)items
 {
   [log addObject: @"did"];
+}
+- (void) sharingService: (NSSharingService *)service
+    didFailToShareItems: (NSArray *)items error: (NSError *)error
+{
+  [log addObject: [NSString stringWithFormat: @"failed %ld", (long)[error code]]];
+}
+@end
+
+/* A service whose work ends after it returns, as an upload's does: it
+   reports later, with -finish:, or while it performs (a cancelled panel). */
+@interface LaterWork : NSObject
+{
+@public
+  NSSharingService *pending;
+  NSArray *pendingItems;
+  NSError *now;   /* reported while performing, if set */
+}
+@end
+
+@implementation LaterWork
+- (void) dealloc
+{
+  [pendingItems release];
+  [now release];
+  [super dealloc];
+}
+- (void) shareItems: (NSArray *)items service: (NSSharingService *)service
+{
+  GSSharingServiceWillFinishLater (service);
+  if (now != nil)
+    {
+      GSSharingServiceFinish (service, items, now);
+      return;
+    }
+  pending = service;  /* the library keeps it until it reports */
+  ASSIGN (pendingItems, items);
+}
+- (void) finish: (NSError *)error
+{
+  GSSharingServiceFinish (pending, pendingItems, error);
+  pending = nil;
 }
 @end
 
@@ -111,6 +153,57 @@ main (int argc, const char **argv)
             "it keeps a subject and recipients");
     }
   END_SET ("the app's own service")
+
+  START_SET ("a service that reports how it went")
+    {
+      Recorder *r = [[Recorder new] autorelease];
+      LaterWork *w = [[LaterWork new] autorelease];
+      NSSharingService *s;
+
+      @autoreleasepool
+        {
+          s = [[[NSSharingService alloc]
+            initWithTitle: @"Upload" image: nil alternateImage: nil
+                   target: w action: @selector(shareItems:service:)] autorelease];
+          [s setDelegate: r];
+          [s performWithItems: files];
+        }
+      PASS_EQUAL (r->log, [NSArray arrayWithObject: @"will"],
+                  "nothing is shared yet when the service returns");
+      PASS (w->pending == s, "the service is kept while its work goes on");
+      [w finish: nil];
+      PASS_EQUAL (r->log, ([NSArray arrayWithObjects: @"will", @"did", nil]),
+                  "it says it shared once the work is done");
+      [w finish: nil];
+      PASS ([r->log count] == 2, "and only once");
+
+      [r->log removeAllObjects];
+      @autoreleasepool
+        {
+          s = [[[NSSharingService alloc]
+            initWithTitle: @"Upload" image: nil alternateImage: nil
+                   target: w action: @selector(shareItems:service:)] autorelease];
+          [s setDelegate: r];
+          [s performWithItems: files];
+        }
+      [w finish: [NSError errorWithDomain: @"rclone" code: 3 userInfo: nil]];
+      PASS_EQUAL (r->log, ([NSArray arrayWithObjects: @"will", @"failed 3", nil]),
+                  "a failure is reported as a failure, not as shared");
+
+      [r->log removeAllObjects];
+      ASSIGN (w->now, GSSharingCancelledError ());
+      s = [[[NSSharingService alloc]
+        initWithTitle: @"Save a Copy" image: nil alternateImage: nil
+               target: w action: @selector(shareItems:service:)] autorelease];
+      [s setDelegate: r];
+      [s performWithItems: files];
+      PASS_EQUAL (r->log, ([NSArray arrayWithObjects: @"will",
+        [NSString stringWithFormat: @"failed %ld", (long)NSUserCancelledError], nil]),
+                  "cancelled while it performs: reported once, as cancelled");
+      PASS ([[GSSharingCancelledError () domain] isEqual: NSCocoaErrorDomain],
+            "a cancel is AppKit's NSUserCancelledError");
+    }
+  END_SET ("a service that reports how it went")
 
   START_SET ("built-in services")
     {
