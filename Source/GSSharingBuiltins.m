@@ -1193,7 +1193,7 @@ GSSharingBuiltinServicesForItems(NSArray *items)
 #endif
     nil];
 
-  return all;
+  return [all arrayByAddingObjectsFromArray: GSSharingRcloneServicesForItems(items)];
 }
 
 

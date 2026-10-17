@@ -79,6 +79,11 @@ NSSharingService *GSSharingMakeBuiltinService(NSString *name,
 /* The built-in services for items, in the sheet's order. */
 NSArray *GSSharingBuiltinServicesForItems(NSArray *items);
 
+/* rclone's services for items: one per remote that makes links, or one
+   to unlock an encrypted config; none in a Flatpak or without rclone
+   (GSSharingRcloneService.m). */
+NSArray *GSSharingRcloneServicesForItems(NSArray *items);
+
 /* The providers registered by the app and found in plug-ins. */
 NSArray *GSSharingProviders(void);
 

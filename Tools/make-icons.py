@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Writes the library's symbolic icons to Resources/: share, email, copy,
-save, folder, open (24x24) and file, text (48x48), named <name>-symbolic.png so
+save, folder, open, cloud (24x24) and file, text (48x48), named <name>-symbolic.png so
 themes that tint template images draw them in the colour of the text around
 them. Only the shape (alpha) matters. Needs python3-cairo."""
 
@@ -70,6 +70,21 @@ def open_with(cr):
     triangle(cr, [(13, 3), (21, 3), (21, 11)])
 
 
+def cloud(cr):
+    # A wide cloud with an arrow rising into it: upload, then link.
+    cr.set_line_width(W)
+    cr.new_path()
+    cr.move_to(9, 18)
+    cr.line_to(6, 18)
+    cr.arc(6, 14, 4, math.pi * 0.5, math.pi * 1.5)
+    cr.arc(11, 9.5, 5, math.pi * 1.1, math.pi * 1.85)
+    cr.arc(18, 13.5, 4.5, math.pi * 1.4, math.pi * 0.5)
+    cr.line_to(15, 18)
+    cr.stroke()
+    stroke(cr, [(12, 21), (12, 14)])
+    triangle(cr, [(8.5, 15.5), (15.5, 15.5), (12, 11.5)])
+
+
 def file48(cr):
     stroke(cr, [(11, 5), (29, 5), (39, 15), (39, 43), (11, 43)], close=True)
     stroke(cr, [(29, 5), (29, 15), (39, 15)])
@@ -89,6 +104,7 @@ ICONS = {
     "GSSharing-save-symbolic": (save, 24),
     "GSSharing-folder-symbolic": (folder, 24),
     "GSSharing-open-symbolic": (open_with, 24),
+    "GSSharing-cloud-symbolic": (cloud, 24),
     "GSSharing-file-symbolic": (file48, 48),
     "GSSharing-text-symbolic": (text48, 48),
 }
