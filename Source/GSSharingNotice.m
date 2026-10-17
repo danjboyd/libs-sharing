@@ -54,6 +54,25 @@ GSSharingNoticeLabel(NSString *text, NSRect frame, NSFont *font, NSColor *color)
   return label;
 }
 
+/* The height text wraps to in width: GNUstep's text field cell measures
+   one line whatever it wraps to. Each line is given room for a word that
+   didn't fit at its end. */
+static CGFloat
+GSSharingNoticeTextHeight(NSString *text, NSFont *font, CGFloat width)
+{
+  NSDictionary *attributes = [NSDictionary dictionaryWithObject: font
+                                                         forKey: NSFontAttributeName];
+  CGFloat textWidth = [text sizeWithAttributes: attributes].width;
+  CGFloat lineHeight = ceil([font ascender] - [font descender] + [font leading]) + 1.0;
+  CGFloat lines = ceil(textWidth / (width * 0.9));
+
+  if (lines < 1.0)
+    {
+      lines = 1.0;
+    }
+  return lines * lineHeight + 4.0;
+}
+
 @implementation GSSharingNotice
 
 + (void) showMessage: (NSString *)message
@@ -107,8 +126,8 @@ GSSharingNoticeLabel(NSString *text, NSRect frame, NSFont *font, NSColor *color)
         NSMakeRect(0, 0, width - textX - margin, 32.0),
         [NSFont systemFontOfSize: [NSFont smallSystemFontSize]],
         [NSColor secondaryLabelColor]);
-      detailHeight = ceil([[detailLabel cell] cellSizeForBounds:
-        NSMakeRect(0, 0, width - textX - margin, 1000.0)].height);
+      detailHeight = GSSharingNoticeTextHeight(detail, [detailLabel font],
+                                               width - textX - margin);
       if (detailHeight < 32.0)
         {
           detailHeight = 32.0;
