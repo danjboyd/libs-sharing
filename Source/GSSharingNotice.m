@@ -81,6 +81,8 @@ GSSharingNoticeLabel(NSString *text, NSRect frame, NSFont *font, NSColor *color)
   CGFloat margin = 16.0;
   CGFloat iconSize = 48.0;
   CGFloat textX = margin;
+  NSTextField *detailLabel = nil;
+  CGFloat detailHeight = 0.0;
   NSView *content;
   NSArray *titles;
   SEL actions[3];
@@ -94,6 +96,25 @@ GSSharingNoticeLabel(NSString *text, NSRect frame, NSFont *font, NSColor *color)
       return nil;
     }
   ASSIGNCOPY(_fileURL, fileURL);
+  /* The detail wraps: the notice grows for a long one. */
+  if (fileURL != nil)
+    {
+      textX = margin + iconSize + 12.0;
+    }
+  if (detail != nil)
+    {
+      detailLabel = GSSharingNoticeLabel(detail,
+        NSMakeRect(0, 0, width - textX - margin, 32.0),
+        [NSFont systemFontOfSize: [NSFont smallSystemFontSize]],
+        [NSColor secondaryLabelColor]);
+      detailHeight = ceil([[detailLabel cell] cellSizeForBounds:
+        NSMakeRect(0, 0, width - textX - margin, 1000.0)].height);
+      if (detailHeight < 32.0)
+        {
+          detailHeight = 32.0;
+        }
+      height += detailHeight - 32.0;
+    }
   _panel = [[GSSharingNoticePanel alloc]
     initWithContentRect: NSMakeRect(0, 0, width, height)
               styleMask: (NSTitledWindowMask | NSClosableWindowMask
@@ -118,17 +139,15 @@ GSSharingNoticeLabel(NSString *text, NSRect frame, NSFont *font, NSColor *color)
       [icon setFileURL: fileURL];
       [icon setToolTip: @"Drag the file into an email or a chat"];
       [content addSubview: icon];
-      textX = margin + iconSize + 12.0;
     }
   [content addSubview: GSSharingNoticeLabel(message,
     NSMakeRect(textX, height - margin - 36.0, width - textX - margin, 36.0),
     [NSFont systemFontOfSize: 0], [NSColor labelColor])];
-  if (detail != nil)
+  if (detailLabel != nil)
     {
-      [content addSubview: GSSharingNoticeLabel(detail,
-        NSMakeRect(textX, height - margin - 70.0, width - textX - margin, 32.0),
-        [NSFont systemFontOfSize: [NSFont smallSystemFontSize]],
-        [NSColor secondaryLabelColor])];
+      [detailLabel setFrame: NSMakeRect(textX, height - margin - 38.0 - detailHeight,
+                                        width - textX - margin, detailHeight)];
+      [content addSubview: detailLabel];
     }
 
   titles = [NSArray arrayWithObjects: @"Close", @"Copy File", @"Show in Folder", nil];
