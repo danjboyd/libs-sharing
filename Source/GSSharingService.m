@@ -339,9 +339,8 @@ GSSharingDisplayNameOfItem(id item)
     {
       [delegate sharingService: self willShareItems: items];
     }
-  /* finishesLater stays set while an earlier job hasn't reported: it
-     reports once, for the job that's still going. */
   state->performing = YES;
+  state->performDefers = NO;
   state->reported = NO;
 #ifdef GSSHARING_HAS_BLOCKS
   if (state->handler != nil)
@@ -357,8 +356,8 @@ GSSharingDisplayNameOfItem(id item)
                           withObject: self];
     }
   state->performing = NO;
-  /* A service that reports itself has, or will. */
-  if (state->finishesLater || state->reported)
+  /* A job that reports itself has, or will. */
+  if (state->performDefers || state->reported)
     {
       return;
     }
@@ -378,12 +377,13 @@ GSSharingServiceWillFinishLater(NSSharingService *service)
 {
   GSSharingServiceState *state = GSSharingStateForService(service, YES);
 
-  if (state->finishesLater == NO)
+  if (state->performing)
     {
-      state->finishesLater = YES;
-      /* Kept until it reports: the sheet that offered it may be gone. */
-      RETAIN(service);
+      state->performDefers = YES;
     }
+  state->pendingJobs++;
+  /* Kept until the job reports: the sheet that offered it may be gone. */
+  RETAIN(service);
 }
 
 void
@@ -393,12 +393,15 @@ GSSharingServiceFinish(NSSharingService *service, NSArray *items,
   GSSharingServiceState *state = GSSharingStateForService(service, NO);
   id delegate;
 
-  if (state == nil || state->finishesLater == NO)
+  if (state == nil || state->pendingJobs == 0)
     {
       return;
     }
-  state->finishesLater = NO;
-  state->reported = state->performing;
+  state->pendingJobs--;
+  if (state->performing)
+    {
+      state->reported = YES;
+    }
   delegate = state->delegate;
   if (error == nil)
     {

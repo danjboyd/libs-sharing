@@ -33,11 +33,15 @@
   unsigned accepts;
   /* -performWithItems: is running the service's work. */
   BOOL performing;
-  /* The service reports how it went itself (GSSharingServiceWillFinishLater),
-     and hasn't yet. */
-  BOOL finishesLater;
+  /* This -performWithItems:'s job reports how it went itself
+     (GSSharingServiceWillFinishLater). */
+  BOOL performDefers;
   /* It has reported, during this -performWithItems:. */
   BOOL reported;
+  /* Jobs that will report and haven't yet: one per perform that deferred,
+     each holding a retain of the service. Jobs that overlap (an upload
+     started again before the first ends) report in the order they finish. */
+  unsigned pendingJobs;
 }
 @end
 
@@ -87,9 +91,13 @@ NSSharingService *GSSharingMakeBuiltinService(NSString *name,
    fail or be cancelled, says so while it performs, and reports how it went
    with GSSharingServiceFinish: then, or later. The delegate then gets
    -sharingService:didShareItems: (error nil) or
-   -sharingService:didFailToShareItems:error:, once. A service that doesn't
-   is done when it returns, and -performWithItems: reports it shared, as
-   before. The service is kept until it reports. */
+   -sharingService:didFailToShareItems:error:, once per job. A service that
+   doesn't is done when it returns, and -performWithItems: reports it
+   shared, as before. The service is kept until each job reports.
+
+   The delegate isn't retained (as AppKit's isn't), and a report can now
+   come long after the sheet has gone: a delegate that may be deallocated
+   first must set the service's delegate to nil in its -dealloc. */
 void GSSharingServiceWillFinishLater(NSSharingService *service);
 void GSSharingServiceFinish(NSSharingService *service, NSArray *items,
                             NSError *error);

@@ -55,16 +55,24 @@
 @interface LaterWork : NSObject
 {
 @public
-  NSSharingService *pending;
-  NSArray *pendingItems;
-  NSError *now;   /* reported while performing, if set */
+  NSSharingService *pending;  /* the latest job's; the library keeps it */
+  NSMutableArray *jobs;       /* the items of jobs not finished, oldest first */
+  NSError *now;               /* reported while performing, if set */
 }
 @end
 
 @implementation LaterWork
+- (id) init
+{
+  if ((self = [super init]) != nil)
+    {
+      jobs = [NSMutableArray new];
+    }
+  return self;
+}
 - (void) dealloc
 {
-  [pendingItems release];
+  [jobs release];
   [now release];
   [super dealloc];
 }
@@ -76,13 +84,19 @@
       GSSharingServiceFinish (service, items, now);
       return;
     }
-  pending = service;  /* the library keeps it until it reports */
-  ASSIGN (pendingItems, items);
+  pending = service;
+  [jobs addObject: items];
 }
+/* Ends the oldest job, or does what a stray second report would. */
 - (void) finish: (NSError *)error
 {
-  GSSharingServiceFinish (pending, pendingItems, error);
-  pending = nil;
+  NSArray *items = [jobs count] > 0 ? [jobs objectAtIndex: 0] : nil;
+
+  GSSharingServiceFinish (pending, items, error);
+  if (items != nil)
+    {
+      [jobs removeObjectAtIndex: 0];
+    }
 }
 @end
 
@@ -202,6 +216,27 @@ main (int argc, const char **argv)
                   "cancelled while it performs: reported once, as cancelled");
       PASS ([[GSSharingCancelledError () domain] isEqual: NSCocoaErrorDomain],
             "a cancel is AppKit's NSUserCancelledError");
+
+      /* The same service started again before its first job ends. */
+      [r->log removeAllObjects];
+      DESTROY (w->now);
+      @autoreleasepool
+        {
+          s = [[[NSSharingService alloc]
+            initWithTitle: @"Upload" image: nil alternateImage: nil
+                   target: w action: @selector(shareItems:service:)] autorelease];
+          [s setDelegate: r];
+          [s performWithItems: files];
+          [s performWithItems: text];
+        }
+      PASS_EQUAL (r->log, ([NSArray arrayWithObjects: @"will", @"will", nil]),
+                  "two jobs going at once: neither has shared yet");
+      [w finish: nil];
+      [w finish: [NSError errorWithDomain: @"rclone" code: 7 userInfo: nil]];
+      PASS_EQUAL (r->log, ([NSArray arrayWithObjects: @"will", @"will", @"did", @"failed 7", nil]),
+                  "each job reports, in the order they end");
+      [w finish: nil];
+      PASS ([r->log count] == 4, "and nothing more once both have");
     }
   END_SET ("a service that reports how it went")
 
