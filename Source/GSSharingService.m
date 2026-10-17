@@ -341,7 +341,6 @@ GSSharingDisplayNameOfItem(id item)
     }
   state->performing = YES;
   state->performDefers = NO;
-  state->reported = NO;
 #ifdef GSSHARING_HAS_BLOCKS
   if (state->handler != nil)
     {
@@ -356,8 +355,9 @@ GSSharingDisplayNameOfItem(id item)
                           withObject: self];
     }
   state->performing = NO;
-  /* A job that reports itself has, or will. */
-  if (state->performDefers || state->reported)
+  /* A job that reports itself has, or will. Another job ending meanwhile
+     (an upload, while this one's panel ran) doesn't stand for this one. */
+  if (state->performDefers)
     {
       return;
     }
@@ -398,10 +398,6 @@ GSSharingServiceFinish(NSSharingService *service, NSArray *items,
       return;
     }
   state->pendingJobs--;
-  if (state->performing)
-    {
-      state->reported = YES;
-    }
   delegate = state->delegate;
   if (error == nil)
     {

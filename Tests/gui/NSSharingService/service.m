@@ -127,6 +127,27 @@ titles (NSArray *services)
   return t;
 }
 
+/* Defers its first job, then ends it during its second, which doesn't. */
+@interface DeferThenNot : NSObject
+{
+  unsigned performs;
+}
+@end
+
+@implementation DeferThenNot
+- (void) shareItems: (NSArray *)items service: (NSSharingService *)service
+{
+  if (performs++ == 0)
+    {
+      GSSharingServiceWillFinishLater (service);
+    }
+  else
+    {
+      GSSharingServiceFinish (service, items, nil);
+    }
+}
+@end
+
 int
 main (int argc, const char **argv)
 {
@@ -237,6 +258,23 @@ main (int argc, const char **argv)
                   "each job reports, in the order they end");
       [w finish: nil];
       PASS ([r->log count] == 4, "and nothing more once both have");
+
+      /* The same service: its first job defers, and ends while a second
+         perform, which doesn't defer, runs (an upload finishing while a
+         panel is up). */
+      [r->log removeAllObjects];
+      {
+        DeferThenNot *t = [[DeferThenNot new] autorelease];
+
+        s = [[[NSSharingService alloc]
+          initWithTitle: @"Upload" image: nil alternateImage: nil
+                 target: t action: @selector(shareItems:service:)] autorelease];
+        [s setDelegate: r];
+        [s performWithItems: files];
+        [s performWithItems: files];
+        PASS_EQUAL (r->log, ([NSArray arrayWithObjects: @"will", @"will", @"did", @"did", nil]),
+                    "a job that ends during a later perform doesn't stand for that perform's report");
+      }
     }
   END_SET ("a service that reports how it went")
 
