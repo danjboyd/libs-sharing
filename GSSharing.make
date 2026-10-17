@@ -25,7 +25,8 @@ GSSHARING_OBJC_FILES = \
   $(GSSHARING_DIR)/Source/GSSharingPickerPanel.m \
   $(GSSHARING_DIR)/Source/GSSharingNotice.m \
   $(GSSHARING_DIR)/Source/GSSharingBuiltins.m \
-  $(GSSHARING_DIR)/Source/GSSharingToolbarItem.m
+  $(GSSHARING_DIR)/Source/GSSharingToolbarItem.m \
+  $(GSSHARING_DIR)/Source/GSSharingRclone.m
 
 GSSHARING_RESOURCE_FILES = $(wildcard $(GSSHARING_DIR)/Resources/*-symbolic.png)
 
