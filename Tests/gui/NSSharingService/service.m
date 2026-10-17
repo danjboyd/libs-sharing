@@ -7,6 +7,7 @@
 #import <AppKit/AppKit.h>
 #import "Testing.h"
 #import "GSSharing.h"
+#import "GSSharingPrivate.h"
 
 @interface Recorder : NSObject
 {
@@ -42,6 +43,61 @@
 {
   [log addObject: @"did"];
 }
+- (void) sharingService: (NSSharingService *)service
+    didFailToShareItems: (NSArray *)items error: (NSError *)error
+{
+  [log addObject: [NSString stringWithFormat: @"failed %ld", (long)[error code]]];
+}
+@end
+
+/* A service whose work ends after it returns, as an upload's does: it
+   reports later, with -finish:, or while it performs (a cancelled panel). */
+@interface LaterWork : NSObject
+{
+@public
+  NSSharingService *pending;  /* the latest job's; the library keeps it */
+  NSMutableArray *jobs;       /* the items of jobs not finished, oldest first */
+  NSError *now;               /* reported while performing, if set */
+}
+@end
+
+@implementation LaterWork
+- (id) init
+{
+  if ((self = [super init]) != nil)
+    {
+      jobs = [NSMutableArray new];
+    }
+  return self;
+}
+- (void) dealloc
+{
+  [jobs release];
+  [now release];
+  [super dealloc];
+}
+- (void) shareItems: (NSArray *)items service: (NSSharingService *)service
+{
+  GSSharingServiceWillFinishLater (service);
+  if (now != nil)
+    {
+      GSSharingServiceFinish (service, items, now);
+      return;
+    }
+  pending = service;
+  [jobs addObject: items];
+}
+/* Ends the oldest job, or does what a stray second report would. */
+- (void) finish: (NSError *)error
+{
+  NSArray *items = [jobs count] > 0 ? [jobs objectAtIndex: 0] : nil;
+
+  GSSharingServiceFinish (pending, items, error);
+  if (items != nil)
+    {
+      [jobs removeObjectAtIndex: 0];
+    }
+}
 @end
 
 @interface TestProvider : NSObject <GSSharingServiceProvider>
@@ -70,6 +126,27 @@ titles (NSArray *services)
     }
   return t;
 }
+
+/* Defers its first job, then ends it during its second, which doesn't. */
+@interface DeferThenNot : NSObject
+{
+  unsigned performs;
+}
+@end
+
+@implementation DeferThenNot
+- (void) shareItems: (NSArray *)items service: (NSSharingService *)service
+{
+  if (performs++ == 0)
+    {
+      GSSharingServiceWillFinishLater (service);
+    }
+  else
+    {
+      GSSharingServiceFinish (service, items, nil);
+    }
+}
+@end
 
 int
 main (int argc, const char **argv)
@@ -111,6 +188,95 @@ main (int argc, const char **argv)
             "it keeps a subject and recipients");
     }
   END_SET ("the app's own service")
+
+  START_SET ("a service that reports how it went")
+    {
+      Recorder *r = [[Recorder new] autorelease];
+      LaterWork *w = [[LaterWork new] autorelease];
+      NSSharingService *s;
+
+      @autoreleasepool
+        {
+          s = [[[NSSharingService alloc]
+            initWithTitle: @"Upload" image: nil alternateImage: nil
+                   target: w action: @selector(shareItems:service:)] autorelease];
+          [s setDelegate: r];
+          [s performWithItems: files];
+        }
+      PASS_EQUAL (r->log, [NSArray arrayWithObject: @"will"],
+                  "nothing is shared yet when the service returns");
+      PASS (w->pending == s, "the service is kept while its work goes on");
+      [w finish: nil];
+      PASS_EQUAL (r->log, ([NSArray arrayWithObjects: @"will", @"did", nil]),
+                  "it says it shared once the work is done");
+      [w finish: nil];
+      PASS ([r->log count] == 2, "and only once");
+
+      [r->log removeAllObjects];
+      @autoreleasepool
+        {
+          s = [[[NSSharingService alloc]
+            initWithTitle: @"Upload" image: nil alternateImage: nil
+                   target: w action: @selector(shareItems:service:)] autorelease];
+          [s setDelegate: r];
+          [s performWithItems: files];
+        }
+      [w finish: [NSError errorWithDomain: @"rclone" code: 3 userInfo: nil]];
+      PASS_EQUAL (r->log, ([NSArray arrayWithObjects: @"will", @"failed 3", nil]),
+                  "a failure is reported as a failure, not as shared");
+
+      [r->log removeAllObjects];
+      ASSIGN (w->now, GSSharingCancelledError ());
+      s = [[[NSSharingService alloc]
+        initWithTitle: @"Save a Copy" image: nil alternateImage: nil
+               target: w action: @selector(shareItems:service:)] autorelease];
+      [s setDelegate: r];
+      [s performWithItems: files];
+      PASS_EQUAL (r->log, ([NSArray arrayWithObjects: @"will",
+        [NSString stringWithFormat: @"failed %ld", (long)NSUserCancelledError], nil]),
+                  "cancelled while it performs: reported once, as cancelled");
+      PASS ([[GSSharingCancelledError () domain] isEqual: NSCocoaErrorDomain],
+            "a cancel is AppKit's NSUserCancelledError");
+
+      /* The same service started again before its first job ends. */
+      [r->log removeAllObjects];
+      DESTROY (w->now);
+      @autoreleasepool
+        {
+          s = [[[NSSharingService alloc]
+            initWithTitle: @"Upload" image: nil alternateImage: nil
+                   target: w action: @selector(shareItems:service:)] autorelease];
+          [s setDelegate: r];
+          [s performWithItems: files];
+          [s performWithItems: text];
+        }
+      PASS_EQUAL (r->log, ([NSArray arrayWithObjects: @"will", @"will", nil]),
+                  "two jobs going at once: neither has shared yet");
+      [w finish: nil];
+      [w finish: [NSError errorWithDomain: @"rclone" code: 7 userInfo: nil]];
+      PASS_EQUAL (r->log, ([NSArray arrayWithObjects: @"will", @"will", @"did", @"failed 7", nil]),
+                  "each job reports, in the order they end");
+      [w finish: nil];
+      PASS ([r->log count] == 4, "and nothing more once both have");
+
+      /* The same service: its first job defers, and ends while a second
+         perform, which doesn't defer, runs (an upload finishing while a
+         panel is up). */
+      [r->log removeAllObjects];
+      {
+        DeferThenNot *t = [[DeferThenNot new] autorelease];
+
+        s = [[[NSSharingService alloc]
+          initWithTitle: @"Upload" image: nil alternateImage: nil
+                 target: t action: @selector(shareItems:service:)] autorelease];
+        [s setDelegate: r];
+        [s performWithItems: files];
+        [s performWithItems: files];
+        PASS_EQUAL (r->log, ([NSArray arrayWithObjects: @"will", @"will", @"did", @"did", nil]),
+                    "a job that ends during a later perform doesn't stand for that perform's report");
+      }
+    }
+  END_SET ("a service that reports how it went")
 
   START_SET ("built-in services")
     {
