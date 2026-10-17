@@ -6,7 +6,7 @@ include $(GNUSTEP_MAKEFILES)/common.make
 
 GNUSTEP_OBJ_DIR=./obj
 
-TEST_TOOL_NAME =  images service
+TEST_TOOL_NAME =  images rclone service
 
 ADDITIONAL_CPPFLAGS += -I$(GNUSTEP_MAKEFILES)/TestFramework
 
@@ -27,6 +27,7 @@ endif
 
 
 images_OBJC_FILES=images.m
+rclone_OBJC_FILES=rclone.m
 service_OBJC_FILES=service.m
 
 -include GNUmakefile.preamble
