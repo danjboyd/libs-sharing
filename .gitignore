@@ -5,3 +5,5 @@ Tests/tests.log
 Tests/tests.sum
 Tests/oldtests.*
 Examples/ShareDemo/Source/
+# gnustep-tests writes these on each run
+Tests/**/GNUmakefile
