@@ -93,3 +93,15 @@ BOOL GSSharingIsImageFile(id item);
 
 /* The file name of an item, for titles and previews. */
 NSString *GSSharingDisplayNameOfItem(id item);
+
+#if defined(_WIN32)
+/* Windows (GSSharingWin32.m): the clipboard in the formats other Windows
+   apps read (GNUstep's win32 pasteboard server passes only text and
+   images), Simple MAPI, and Explorer with a file selected. */
+BOOL GSSharingWin32WriteText(NSString *plain, NSData *rtf);
+BOOL GSSharingWin32WriteFiles(NSArray *paths, NSData *png);
+BOOL GSSharingWin32ShowInFolder(NSString *path);
+BOOL GSSharingWin32MailClientTakesMAPI(void);
+BOOL GSSharingWin32SendMail(NSString *subject, NSArray *paths,
+                            NSArray *recipients, void *window);
+#endif

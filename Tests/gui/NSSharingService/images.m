@@ -123,6 +123,16 @@ main (int argc, const char **argv)
                           NSMakeSize (3, 2)),
             "the PNG is the image");
 
+#if defined(_WIN32)
+      /* Files go to the Windows clipboard itself (CF_HDROP, and a
+         picture's PNG), not the GNUstep pasteboard, which GNUstep's
+         win32 pasteboard server would reduce to text. Checking that would
+         take the user's clipboard, so it's checked by hand. */
+      (void)png;
+      (void)pngData;
+      (void)pngPath;
+      (void)pdf;
+#else
       [copy performWithItems: [NSArray arrayWithObject: png]];
       PASS_EQUAL ([[pb types] objectAtIndex: 0], NSPasteboardTypePNG,
                   "an image file goes as its image first");
@@ -135,6 +145,7 @@ main (int argc, const char **argv)
       PASS ([[pb types] containsObject: NSPasteboardTypePNG] == NO
             && [[pb types] containsObject: NSFilenamesPboardType],
             "any other file goes as the file only");
+#endif
     }
   END_SET ("Copy")
 
