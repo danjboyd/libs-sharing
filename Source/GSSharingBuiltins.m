@@ -56,7 +56,7 @@
 + (void) openWith: (NSArray *)items service: (NSSharingService *)service;
 #if defined(_WIN32)
 + (void) sendMAPIMail: (NSDictionary *)job;
-+ (void) emailDraftWithNotice: (NSDictionary *)job;
++ (void) finishMAPIMail: (NSDictionary *)job;
 #endif
 @end
 
@@ -930,10 +930,11 @@ GSSharingEmailDraftWithNotice(NSURL *draft, NSURL *file)
 #if defined(_WIN32)
   /* Simple MAPI attaches the file in the default client (Outlook, classic,
      and Thunderbird take it). It blocks until the client is done with the
-     draft, so it runs off the main thread; a failure comes back to
-     +emailDraftWithNotice:. Without a MAPI client (none, the new Outlook,
-     webmail) the mailto: draft and the notice, below. */
-  if (GSSharingWin32MailClientTakesMAPI())
+     draft, so it runs off the main thread and the service reports when it
+     returns (+finishMAPIMail:). Without a MAPI client (none, the new
+     Outlook, webmail) the mailto: draft and the notice, below. */
+  if (GSSharingWin32SendMailForTesting != NULL
+      || GSSharingWin32MailClientTakesMAPI())
     {
       NSMutableArray *paths = [NSMutableArray array];
       NSEnumerator *e = [files objectEnumerator];
@@ -947,7 +948,9 @@ GSSharingEmailDraftWithNotice(NSURL *draft, NSURL *file)
       job = [NSDictionary dictionaryWithObjectsAndKeys:
         subject, @"subject", paths, @"paths",
         ([service recipients] != nil ? [service recipients] : [NSArray array]),
-        @"recipients", draft, @"draft", [files objectAtIndex: 0], @"file", nil];
+        @"recipients", draft, @"draft", [files objectAtIndex: 0], @"file",
+        service, @"service", items, @"items", nil];
+      GSSharingServiceWillFinishLater(service);
       [NSThread detachNewThreadSelector: @selector(sendMAPIMail:)
                                toTarget: self
                              withObject: job];
@@ -961,22 +964,49 @@ GSSharingEmailDraftWithNotice(NSURL *draft, NSURL *file)
 + (void) sendMAPIMail: (NSDictionary *)job
 {
   CREATE_AUTORELEASE_POOL(pool);
+  unsigned long (*send)(NSString *, NSArray *, NSArray *, void *)
+    = GSSharingWin32SendMailForTesting != NULL
+      ? GSSharingWin32SendMailForTesting : GSSharingWin32SendMail;
+  unsigned long status = send([job objectForKey: @"subject"],
+                              [job objectForKey: @"paths"],
+                              [job objectForKey: @"recipients"], NULL);
+  NSMutableDictionary *result = [[job mutableCopy] autorelease];
 
-  if (GSSharingWin32SendMail([job objectForKey: @"subject"],
-                             [job objectForKey: @"paths"],
-                             [job objectForKey: @"recipients"], NULL) == NO)
-    {
-      [self performSelectorOnMainThread: @selector(emailDraftWithNotice:)
-                             withObject: job
-                          waitUntilDone: NO];
-    }
+  [result setObject: [NSNumber numberWithUnsignedLong: status]
+             forKey: @"status"];
+  /* Not the main dispatch queue: GNUstep's never drains on Windows. */
+  [self performSelectorOnMainThread: @selector(finishMAPIMail:)
+                         withObject: result
+                      waitUntilDone: NO];
   RELEASE(pool);
 }
 
-+ (void) emailDraftWithNotice: (NSDictionary *)job
+/* On the main thread, when MAPISendMailW has returned: the draft opened,
+   was cancelled in the client, or failed, which falls back to the mailto:
+   draft and the notice and reports the failure. */
++ (void) finishMAPIMail: (NSDictionary *)job
 {
-  GSSharingEmailDraftWithNotice([job objectForKey: @"draft"],
-                                [job objectForKey: @"file"]);
+  NSSharingService *service = [job objectForKey: @"service"];
+  NSArray *items = [job objectForKey: @"items"];
+  unsigned long status = [[job objectForKey: @"status"] unsignedLongValue];
+
+  if (status == 0)
+    {
+      GSSharingServiceFinish(service, items, nil);
+    }
+  else if (status == GSSHARING_MAPI_USER_ABORT)
+    {
+      GSSharingServiceFinish(service, items, GSSharingCancelledError());
+    }
+  else
+    {
+      GSSharingEmailDraftWithNotice([job objectForKey: @"draft"],
+                                    [job objectForKey: @"file"]);
+      GSSharingServiceFinish(service, items,
+        [NSError errorWithDomain: GSSharingMAPIErrorDomain
+                            code: (NSInteger)status
+                        userInfo: nil]);
+    }
 }
 #endif
 
