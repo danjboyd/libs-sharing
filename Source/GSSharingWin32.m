@@ -275,7 +275,6 @@ typedef ULONG (WINAPI *GSSharingMAPISendMailW)(ULONG_PTR session,
 
 #define GSSHARING_MAPI_LOGON_UI 0x00000001
 #define GSSHARING_MAPI_DIALOG 0x00000008
-#define GSSHARING_MAPI_USER_ABORT 1
 #define GSSHARING_MAPI_TO 1
 
 /* Whether the default mail client takes Simple MAPI: Clients\Mail names
@@ -336,11 +335,13 @@ GSSharingWin32Wide(NSString *string)
   return (PWSTR)[data bytes];
 }
 
+unsigned long (*GSSharingWin32SendMailForTesting)(NSString *subject,
+  NSArray *paths, NSArray *recipients, void *window) = NULL;
+
 /* A draft in the MAPI client with the files attached. Blocks until the
    client is done with it (some clients until the compose window closes),
-   so callers run it off the main thread. YES when the draft opened or
-   the user cancelled it in the client. */
-BOOL
+   so callers run it off the main thread. Returns MAPISendMailW's status. */
+unsigned long
 GSSharingWin32SendMail(NSString *subject, NSArray *paths,
                        NSArray *recipients, void *window)
 {
@@ -351,7 +352,7 @@ GSSharingWin32SendMail(NSString *subject, NSArray *paths,
   GSSharingMapiRecipDescW *to = NULL;
   GSSharingMapiMessageW message;
   NSUInteger i;
-  ULONG status = (ULONG)-1;
+  ULONG status = (ULONG)GSSHARING_MAPI_UNAVAILABLE;
 
   OleInitialize(NULL);
   mapi = LoadLibraryW(L"mapi32.dll");
@@ -404,7 +405,7 @@ GSSharingWin32SendMail(NSString *subject, NSArray *paths,
     }
   OleUninitialize();
   RELEASE(pool);
-  return status == 0 || status == GSSHARING_MAPI_USER_ABORT;
+  return status;
 }
 
 #endif /* !GS_HAS_SHARING_SERVICES && _WIN32 */

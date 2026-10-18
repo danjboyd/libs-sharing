@@ -136,6 +136,17 @@ BOOL GSSharingWin32WriteText(NSString *plain, NSData *rtf);
 BOOL GSSharingWin32WriteFiles(NSArray *paths, NSData *png);
 BOOL GSSharingWin32ShowInFolder(NSString *path);
 BOOL GSSharingWin32MailClientTakesMAPI(void);
-BOOL GSSharingWin32SendMail(NSString *subject, NSArray *paths,
-                            NSArray *recipients, void *window);
+/* MAPISendMailW's status: 0 when the draft opened, 1 (MAPI_USER_ABORT)
+   when the user cancelled it, GSSHARING_MAPI_UNAVAILABLE without
+   mapi32.dll's MAPISendMailW. */
+#define GSSHARING_MAPI_USER_ABORT 1
+#define GSSHARING_MAPI_UNAVAILABLE ((unsigned long)-1)
+/* Email's error when MAPISendMailW fails; the code is its status. */
+#define GSSharingMAPIErrorDomain @"GSSharingMAPIErrorDomain"
+unsigned long GSSharingWin32SendMail(NSString *subject, NSArray *paths,
+                                     NSArray *recipients, void *window);
+/* Tests only: when set, Email takes the MAPI path whatever the default
+   mail client is and calls this instead of GSSharingWin32SendMail. */
+extern unsigned long (*GSSharingWin32SendMailForTesting)(NSString *subject,
+  NSArray *paths, NSArray *recipients, void *window);
 #endif
