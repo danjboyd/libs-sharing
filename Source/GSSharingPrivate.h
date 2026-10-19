@@ -128,6 +128,13 @@ BOOL GSSharingIsImageFile(id item);
 /* The file name of an item, for titles and previews. */
 NSString *GSSharingDisplayNameOfItem(id item);
 
+/* A service's title as a tile shows it in width with font: as it is if it
+   fits, else on two lines broken between words ("Send to Server" over
+   "- home"), a line that still doesn't fit losing its middle to an
+   ellipsis. Worked out here, not left to the button cell, as themes draw
+   titles their own way (GSSharingPickerPanel.m). */
+NSString *GSSharingTileTitle(NSString *title, NSFont *font, CGFloat width);
+
 #if defined(_WIN32)
 /* Windows (GSSharingWin32.m): the clipboard in the formats other Windows
    apps read (GNUstep's win32 pasteboard server passes only text and
