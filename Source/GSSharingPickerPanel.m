@@ -199,6 +199,20 @@ GSSharingTileTitle(NSString *title, NSFont *font, CGFloat width)
     {
       fitting++;
     }
+  /* A line doesn't end with a lone dash: "Send to Test" over "- home",
+     not "Send to Test -" over "home". */
+  if (fitting > 1 && fitting < count)
+    {
+      NSString *last = [words objectAtIndex: fitting - 1];
+
+      if ([last length] == 1
+        && ([last characterAtIndex: 0] == '-'
+          || [last characterAtIndex: 0] == 0x2013
+          || [last characterAtIndex: 0] == 0x2014))
+        {
+          fitting--;
+        }
+    }
   if (fitting == 0)
     {
       return GSSharingTruncateMiddle(title, font, width);
