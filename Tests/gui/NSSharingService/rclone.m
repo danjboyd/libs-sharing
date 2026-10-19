@@ -7,6 +7,7 @@
 #import <Foundation/Foundation.h>
 #import "Testing.h"
 #import "GSSharingRclone.h"
+#import "GSSharingPrivate.h"
 
 @interface Watcher : NSObject
 {
@@ -238,6 +239,23 @@ main (int argc, char **argv)
   setMode (@"plain");
   [GSSharingRclone remotesWithPassword: nil error: NULL];
   PASS(argsLog () == nil, "the remotes are kept for a while");
+
+  /* The sheet's tiles say what they do; the tooltip says how (#13). */
+  {
+    NSArray *services = GSSharingRcloneServicesForItems(
+      [NSArray arrayWithObject: [NSURL fileURLWithPath: @"/tmp/Report.pdf"]]);
+    NSSharingService *link = nil;
+    NSEnumerator *se = [services objectEnumerator];
+    NSSharingService *s;
+
+    while ((s = [se nextObject]) != nil)
+      {
+        if ([[s menuItemTitle] isEqual: @"Link on Work Drive"]) link = s;
+      }
+    PASS(link != nil, "a remote's tile is titled Link on <remote>");
+    PASS_EQUAL([link title], @"Upload a copy to Work Drive (OneDrive) and copy a link to it",
+      "and its title, the tooltip, says what it does");
+  }
 
   /* An encrypted config. */
   [GSSharingRclone forgetRemotes];
