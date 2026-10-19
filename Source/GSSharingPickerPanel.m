@@ -17,8 +17,8 @@ static const CGFloat GSSharingMargin = 16.0;
 static const CGFloat GSSharingIconSize = 48.0;
 static const CGFloat GSSharingButtonWidth = 112.0;
 static const CGFloat GSSharingButtonHeight = 72.0;
-/* Room the button's bezel takes from each side of its title. */
-static const CGFloat GSSharingButtonTitleInset = 8.0;
+/* Room kept between a tile's title and the edges the button cell draws in. */
+static const CGFloat GSSharingButtonTitlePadding = 2.0;
 static const CGFloat GSSharingButtonGap = 8.0;
 static const NSUInteger GSSharingColumns = 4;
 
@@ -99,7 +99,14 @@ GSSharingWidthOfString(NSString *string, NSFont *font)
   return [string sizeWithAttributes: attributes].width;
 }
 
-/* string with its middle replaced by "…" to fit width, cut between
+/* "..." as one character; sources stay ASCII. */
+static NSString *
+GSSharingEllipsis(void)
+{
+  return [NSString stringWithFormat: @"%C", (unichar)0x2026];
+}
+
+/* string with its middle replaced by an ellipsis to fit width, cut between
    composed characters. */
 static NSString *
 GSSharingTruncateMiddle(NSString *string, NSFont *font, CGFloat width)
@@ -107,7 +114,7 @@ GSSharingTruncateMiddle(NSString *string, NSFont *font, CGFloat width)
   NSUInteger length = [string length];
   NSUInteger low = 0;
   NSUInteger high = length;
-  NSString *best = @"…";
+  NSString *best = GSSharingEllipsis();
 
   if (GSSharingWidthOfString(string, font) <= width)
     {
@@ -128,8 +135,9 @@ GSSharingTruncateMiddle(NSString *string, NSFont *font, CGFloat width)
           high = kept - 1;
           continue;
         }
-      candidate = [NSString stringWithFormat: @"%@…%@",
+      candidate = [NSString stringWithFormat: @"%@%@%@",
                             [string substringWithRange: head],
+                            GSSharingEllipsis(),
                             [string substringWithRange: tail]];
       if (GSSharingWidthOfString(candidate, font) <= width)
         {
@@ -175,6 +183,18 @@ GSSharingTileTitle(NSString *title, NSFont *font, CGFloat width)
                    [[words subarrayWithRange: NSMakeRange(0, fitting)]
                      componentsJoinedByString: @" "],
                    GSSharingTruncateMiddle(rest, font, width)];
+}
+
+/* A service's tile: a square button with its image above its title. */
+static NSButton *
+GSSharingServiceButton(NSRect frame)
+{
+  NSButton *button = AUTORELEASE([[NSButton alloc] initWithFrame: frame]);
+
+  [button setButtonType: NSMomentaryPushInButton];
+  [button setBezelStyle: NSRegularSquareBezelStyle];
+  [button setImagePosition: NSImageAbove];
+  return button;
 }
 
 /* "Q3 Plan.pdf", "63 KB" for a file; a count for several items. */
@@ -342,13 +362,21 @@ GSSharingDetailOfItems(NSArray *items)
   NSUInteger i;
   CGFloat height;
   CGFloat buttonHeight = GSSharingButtonHeight;
-  NSFont *font = [NSFont systemFontOfSize: 0];
-  CGFloat titleWidth = GSSharingButtonWidth - 2 * GSSharingButtonTitleInset;
+  NSButton *probe;
+  NSFont *font;
+  CGFloat titleWidth;
   NSMutableArray *titles = [NSMutableArray array];
 
   [subviews makeObjectsPerformSelector: @selector(removeFromSuperview)];
   ASSIGN(_services, [self services]);
   count = [_services count];
+  /* Titles are fitted with the font the theme gives a tile's cell, to the
+     width the cell draws in. */
+  probe = GSSharingServiceButton(NSMakeRect(0, 0, GSSharingButtonWidth,
+                                            GSSharingButtonHeight));
+  font = [[probe cell] font];
+  titleWidth = NSWidth([[probe cell] drawingRectForBounds: [probe bounds]])
+    - 2 * GSSharingButtonTitlePadding;
   /* Every tile is a line taller when a title takes two. */
   for (i = 0; i < count; i++)
     {
@@ -386,17 +414,13 @@ GSSharingDetailOfItems(NSArray *items)
                                 height - (row + 1) * buttonHeight
                                 - row * GSSharingButtonGap,
                                 GSSharingButtonWidth, buttonHeight);
-      NSButton *button = AUTORELEASE([[NSButton alloc] initWithFrame: frame]);
+      NSButton *button = GSSharingServiceButton(frame);
       NSImage *image = [service image];
 
-      [button setButtonType: NSMomentaryPushInButton];
-      [button setBezelStyle: NSRegularSquareBezelStyle];
-      [button setFont: font];
       [button setTitle: [titles objectAtIndex: i]];
       /* A service without an image (an app's own) gets the share symbol,
          so its tile is laid out as the others are. */
       [button setImage: (image != nil ? image : GSSharingImageNamed(@"GSSharing-share"))];
-      [button setImagePosition: NSImageAbove];
       [button setTag: i];
       [button setTarget: self];
       [button setAction: @selector(serviceClicked:)];

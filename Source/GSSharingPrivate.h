@@ -129,10 +129,10 @@ BOOL GSSharingIsImageFile(id item);
 NSString *GSSharingDisplayNameOfItem(id item);
 
 /* A service's title as a tile shows it in width with font: as it is if it
-   fits, else on two lines broken between words, a line that still doesn't
-   fit losing its middle to "…" ("Send to Server", "— home"). Worked out
-   here, not left to the button cell, as themes draw titles their own way
-   (GSSharingPickerPanel.m). */
+   fits, else on two lines broken between words ("Send to Server" over
+   "- home"), a line that still doesn't fit losing its middle to an
+   ellipsis. Worked out here, not left to the button cell, as themes draw
+   titles their own way (GSSharingPickerPanel.m). */
 NSString *GSSharingTileTitle(NSString *title, NSFont *font, CGFloat width);
 
 #if defined(_WIN32)
