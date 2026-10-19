@@ -17,6 +17,8 @@ static const CGFloat GSSharingMargin = 16.0;
 static const CGFloat GSSharingIconSize = 48.0;
 static const CGFloat GSSharingButtonWidth = 112.0;
 static const CGFloat GSSharingButtonHeight = 72.0;
+/* Room the button's bezel takes from each side of its title. */
+static const CGFloat GSSharingButtonTitleInset = 8.0;
 static const CGFloat GSSharingButtonGap = 8.0;
 static const NSUInteger GSSharingColumns = 4;
 
@@ -86,6 +88,93 @@ GSSharingLabel(NSRect frame, NSFont *font, NSColor *color)
   [label setTextColor: color];
   [[label cell] setLineBreakMode: NSLineBreakByTruncatingMiddle];
   return label;
+}
+
+static CGFloat
+GSSharingWidthOfString(NSString *string, NSFont *font)
+{
+  NSDictionary *attributes = [NSDictionary dictionaryWithObject: font
+                                                         forKey: NSFontAttributeName];
+
+  return [string sizeWithAttributes: attributes].width;
+}
+
+/* string with its middle replaced by "…" to fit width, cut between
+   composed characters. */
+static NSString *
+GSSharingTruncateMiddle(NSString *string, NSFont *font, CGFloat width)
+{
+  NSUInteger length = [string length];
+  NSUInteger low = 0;
+  NSUInteger high = length;
+  NSString *best = @"…";
+
+  if (GSSharingWidthOfString(string, font) <= width)
+    {
+      return string;
+    }
+  /* The most characters kept, half from each end, that fit. */
+  while (low < high)
+    {
+      NSUInteger kept = (low + high + 1) / 2;
+      NSRange head = [string rangeOfComposedCharacterSequencesForRange:
+                               NSMakeRange(0, (kept + 1) / 2)];
+      NSRange tail = [string rangeOfComposedCharacterSequencesForRange:
+                               NSMakeRange(length - kept / 2, kept / 2)];
+      NSString *candidate;
+
+      if (NSMaxRange(head) > tail.location)
+        {
+          high = kept - 1;
+          continue;
+        }
+      candidate = [NSString stringWithFormat: @"%@…%@",
+                            [string substringWithRange: head],
+                            [string substringWithRange: tail]];
+      if (GSSharingWidthOfString(candidate, font) <= width)
+        {
+          best = candidate;
+          low = kept;
+        }
+      else
+        {
+          high = kept - 1;
+        }
+    }
+  return best;
+}
+
+NSString *
+GSSharingTileTitle(NSString *title, NSFont *font, CGFloat width)
+{
+  NSArray *words;
+  NSUInteger count;
+  NSUInteger fitting = 0;
+  NSString *rest;
+
+  if (title == nil || GSSharingWidthOfString(title, font) <= width)
+    {
+      return title;
+    }
+  /* The most words that fit on the first line; the rest go on the second. */
+  words = [title componentsSeparatedByString: @" "];
+  count = [words count];
+  while (fitting + 1 < count
+    && GSSharingWidthOfString([[words subarrayWithRange: NSMakeRange(0, fitting + 1)]
+                                componentsJoinedByString: @" "], font) <= width)
+    {
+      fitting++;
+    }
+  if (fitting == 0)
+    {
+      return GSSharingTruncateMiddle(title, font, width);
+    }
+  rest = [[words subarrayWithRange: NSMakeRange(fitting, count - fitting)]
+           componentsJoinedByString: @" "];
+  return [NSString stringWithFormat: @"%@\n%@",
+                   [[words subarrayWithRange: NSMakeRange(0, fitting)]
+                     componentsJoinedByString: @" "],
+                   GSSharingTruncateMiddle(rest, font, width)];
 }
 
 /* "Q3 Plan.pdf", "63 KB" for a file; a count for several items. */
@@ -252,16 +341,32 @@ GSSharingDetailOfItems(NSArray *items)
   NSUInteger rows;
   NSUInteger i;
   CGFloat height;
+  CGFloat buttonHeight = GSSharingButtonHeight;
+  NSFont *font = [NSFont systemFontOfSize: 0];
+  CGFloat titleWidth = GSSharingButtonWidth - 2 * GSSharingButtonTitleInset;
+  NSMutableArray *titles = [NSMutableArray array];
 
   [subviews makeObjectsPerformSelector: @selector(removeFromSuperview)];
   ASSIGN(_services, [self services]);
   count = [_services count];
+  /* Every tile is a line taller when a title takes two. */
+  for (i = 0; i < count; i++)
+    {
+      NSString *title = GSSharingTileTitle([[_services objectAtIndex: i] menuItemTitle],
+                                           font, titleWidth);
+
+      [titles addObject: (title != nil ? title : @"")];
+      if ([title rangeOfString: @"\n"].location != NSNotFound)
+        {
+          buttonHeight = GSSharingButtonHeight + ceil([font defaultLineHeightForFont]);
+        }
+    }
   rows = (count + GSSharingColumns - 1) / GSSharingColumns;
   if (rows == 0)
     {
       rows = 1;
     }
-  height = rows * GSSharingButtonHeight + (rows - 1) * GSSharingButtonGap;
+  height = rows * buttonHeight + (rows - 1) * GSSharingButtonGap;
   [_servicesView setFrameSize: NSMakeSize(width, height)];
   if (count == 0)
     {
@@ -278,15 +383,19 @@ GSSharingDetailOfItems(NSArray *items)
       NSUInteger row = i / GSSharingColumns;
       NSUInteger column = i % GSSharingColumns;
       NSRect frame = NSMakeRect(column * (GSSharingButtonWidth + GSSharingButtonGap),
-                                height - (row + 1) * GSSharingButtonHeight
+                                height - (row + 1) * buttonHeight
                                 - row * GSSharingButtonGap,
-                                GSSharingButtonWidth, GSSharingButtonHeight);
+                                GSSharingButtonWidth, buttonHeight);
       NSButton *button = AUTORELEASE([[NSButton alloc] initWithFrame: frame]);
+      NSImage *image = [service image];
 
       [button setButtonType: NSMomentaryPushInButton];
       [button setBezelStyle: NSRegularSquareBezelStyle];
-      [button setTitle: [service menuItemTitle]];
-      [button setImage: [service image]];
+      [button setFont: font];
+      [button setTitle: [titles objectAtIndex: i]];
+      /* A service without an image (an app's own) gets the share symbol,
+         so its tile is laid out as the others are. */
+      [button setImage: (image != nil ? image : GSSharingImageNamed(@"GSSharing-share"))];
       [button setImagePosition: NSImageAbove];
       [button setTag: i];
       [button setTarget: self];
