@@ -1128,10 +1128,12 @@ GSSharingEmailDraftWithNotice(NSURL *draft, NSURL *file)
   {
     NSTask *task = AUTORELEASE([NSTask new]);
 
-    /* Explorer exits with 1 even when it worked. */
+    /* Explorer exits with 1 even when it worked. Its /select takes only
+       C:\... (#23). */
     [task setLaunchPath: @"explorer.exe"];
     [task setArguments: [NSArray arrayWithObject:
-      [NSString stringWithFormat: @"/select,%@", path]]];
+      [NSString stringWithFormat: @"/select,%@",
+        [path stringByReplacingOccurrencesOfString: @"/" withString: @"\\"]]]];
     NS_DURING
       {
         [task launch];
