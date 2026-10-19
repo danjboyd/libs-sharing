@@ -54,6 +54,10 @@ main (int argc, const char **argv)
         }
       width = widthOf (@"Send to Server", font) + 2;
 
+      PASS_EQUAL (GSSharingTileTitle (home, font,
+                                      widthOf ([NSString stringWithFormat: @"Send to Server %@", dash], font) + 2),
+                  ([NSString stringWithFormat: @"Send to Server\n%@ home", dash]),
+                  "a line doesn't end with a lone dash");
       PASS_EQUAL (GSSharingTileTitle (@"Copy", font, width), @"Copy",
                   "a title that fits is kept as it is");
       PASS_EQUAL (GSSharingTileTitle (home, font, width),
