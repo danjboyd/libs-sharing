@@ -1079,6 +1079,13 @@ GSSharingEmailDraftWithNotice(NSURL *draft, NSURL *file)
   panel = [NSSavePanel savePanel];
   [panel setTitle: @"Save a Copy"];
   [panel setNameFieldStringValue: [[file path] lastPathComponent]];
+  /* The copy keeps the file's type: a name typed without the extension
+     gets it, as with the app's own Export (#24). */
+  if ([[[file path] pathExtension] length] > 0)
+    {
+      [panel setAllowedFileTypes:
+        [NSArray arrayWithObject: [[file path] pathExtension]]];
+    }
   [panel setCanCreateDirectories: YES];
   [panel setDirectory: GSSharingSaveCopyDirectory(service, file)];
   if ([panel runModal] != NSFileHandlingPanelOKButton)
