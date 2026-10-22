@@ -394,6 +394,56 @@ main (int argc, const char **argv)
     }
   END_SET ("a picker lives while its sheet shows")
 
+  START_SET ("one sheet at a time")
+    {
+      NSWindow *window = nil;
+      NSUInteger showing = 0;
+      NSEnumerator *e;
+      NSWindow *w;
+      int i;
+
+      NS_DURING
+        {
+          [NSApplication sharedApplication];
+          window = [[NSWindow alloc] initWithContentRect: NSMakeRect (100, 100, 300, 200)
+                                               styleMask: NSTitledWindowMask
+                                                 backing: NSBackingStoreBuffered
+                                                   defer: NO];
+        }
+      NS_HANDLER
+        {
+          window = nil;
+        }
+      NS_ENDHANDLER
+      if (window == nil)
+        {
+          SKIP ("no display")
+        }
+      /* A click on Share makes a new picker each time, as a toolbar item
+         does: the last one's sheet goes (ScreenshotTool #316). */
+      for (i = 0; i < 3; i++)
+        {
+          NSSharingServicePicker *p = [[[NSSharingServicePicker alloc]
+                                         initWithItems: files] autorelease];
+
+          [p showRelativeToRect: NSMakeRect (10, 10, 1, 1)
+                         ofView: [window contentView]
+                  preferredEdge: NSMinYEdge];
+        }
+      e = [[NSApp windows] objectEnumerator];
+      while ((w = [e nextObject]) != nil)
+        {
+          if ([[w title] isEqual: @"Share"] && [w isVisible])
+            {
+              showing++;
+              [w performClose: nil];
+            }
+        }
+      PASS (showing == 1, "three pickers shown in turn leave one sheet");
+      [window release];
+    }
+  END_SET ("one sheet at a time")
+
   [pool release];
   return 0;
 }
