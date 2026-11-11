@@ -371,6 +371,15 @@ GSSharingDisplayNameOfItem(id item)
     }
 }
 
+- (void) reportCancelled
+{
+  /* A job of its own, ended at once as cancelled: while performing, that
+     keeps -performWithItems: from saying it shared, and the sheet that
+     offered the service, watching for its end, comes back (#16). */
+  GSSharingServiceWillFinishLater(self);
+  GSSharingServiceFinish(self, nil, GSSharingCancelledError());
+}
+
 @end
 
 

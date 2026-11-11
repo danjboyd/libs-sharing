@@ -115,6 +115,19 @@ GSSHARING_EXPORT NSSharingServiceName const GSSharingServiceNameOpenWith;
 /** Shares items, telling the delegate before and after. */
 - (void) performWithItems: (NSArray *)items;
 
+/* GNUstep extension. */
+/** For a service of the app's own that runs a dialog while it performs (a
+    Print panel, say): its handler calls this when the user cancels that
+    dialog. The delegate is told the share failed with AppKit's
+    NSUserCancelledError (NSCocoaErrorDomain), not that it shared, and the
+    share sheet it was chosen from comes back, as it does when Save a Copy's
+    panel is cancelled. Each call is one report. Called when the service isn't
+    performing, it reports the cancel the same way: the delegate is told, and
+    GSSharingServiceDidFinishNotification is posted with the cancelled error,
+    though no sheet is waiting for it then; nothing is left pending for the
+    service's next share. */
+- (void) reportCancelled;
+
 @end
 
 /** What a service's delegate may implement (Apple's
